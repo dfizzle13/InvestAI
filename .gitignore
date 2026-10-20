@@ -1,0 +1,12 @@
+node_modules/
+.expo/
+dist/
+web-build/
+.env
+.env.*
+!.env.example
+server/.env
+server/snapshot.json
+__pycache__/
+*.py[cod]
+.DS_Store

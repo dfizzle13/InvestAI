@@ -46,9 +46,11 @@ jobs:
         with:
           accept-android-sdk-licenses: true
           packages: platform-tools
+      - name: Inspect Expo Android autolinking metadata
+        run: npx expo-modules-autolinking resolve --platform android --json
       - name: Build installable APK
         working-directory: android
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:

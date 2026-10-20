@@ -1,0 +1,21 @@
+{
+  "portfolio": {
+    "currency": "USD",
+    "virtual_equity": 10000.00,
+    "realized_pnl": 0.00,
+    "unrealized_pnl": 0.00,
+    "daily_pnl": 0.00,
+    "daily_pnl_percent": 0.00,
+    "updated_at": "2026-10-20T03:14:00Z"
+  },
+  "positions": [],
+  "trades": [],
+  "analytics": {
+    "win_rate": 0,
+    "closed_trades": 0,
+    "average_win": 0,
+    "average_loss": 0,
+    "max_drawdown_percent": 0,
+    "daily": []
+  }
+}

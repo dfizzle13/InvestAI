@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "InvestAI",
+    "slug": "investai",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "scheme": "investai",
+    "plugins": ["expo-secure-store"],
+    "android": {
+      "package": "com.dfizzle13.investai",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B1020"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.dfizzle13.investai",
+      "supportsTablet": true
+    }
+  }
+}

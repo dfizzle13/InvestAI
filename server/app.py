@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException
+from dotenv import load_dotenv
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+load_dotenv(Path(__file__).with_name(".env"))
 
 app = FastAPI(title="InvestAI local data bridge", version="0.1.0")
 bearer = HTTPBearer(auto_error=False)

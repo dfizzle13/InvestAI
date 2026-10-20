@@ -28,6 +28,10 @@ jobs:
           node-version: 22
       - name: Install dependencies
         run: npm install
+      - name: Align Expo package versions
+        run: |
+          npx expo install --fix
+          npm install
       - name: Type-check
         run: npx tsc --noEmit
       - name: Generate Android project

@@ -92,6 +92,7 @@ export default function App() {
     setLoading(true);
     try {
       const c = await saveConnection(baseUrl, token);
+      if(sessionToken && authServerUrl){const saved=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/account/connection",{method:"PUT",headers:{"Content-Type":"application/json",Authorization:"Bearer "+sessionToken},body:JSON.stringify({url:c.url,token:c.token})});if(!saved.ok){const err=await saved.json().catch(()=>({}));throw new Error(err.detail||"Could not save this account connection on the server.");}}
       await testConnection(c.url, c.token);
       setConnectionMessage("Health check passed. Loading account data…");
       const next = await fetchInvestData(c.url, c.token);
@@ -140,6 +141,8 @@ export default function App() {
   const createAccount = useCallback(async () => {
     try { const r=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/admin/users",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+sessionToken},body:JSON.stringify({username:newUsername.trim(),password:newPassword,role:"user"})});const j=await r.json();if(!r.ok)throw new Error(j.detail||"Could not create account");setNewUsername("");setNewPassword("");await loadAdminUsers();Alert.alert("Account created","The new account is ready.",[{text:"Close"}]); } catch(e:any){Alert.alert("Account creation failed",e?.message||String(e),[{text:"Close",style:"cancel"}]);}
   },[authServerUrl,sessionToken,newUsername,newPassword,loadAdminUsers]);
+
+  useEffect(() => { if(!loggedIn || !sessionToken || !authServerUrl) return; let cancelled=false; (async()=>{try{const r=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/account/connection",{headers:{Authorization:"Bearer "+sessionToken,Accept:"application/json"}});if(r.ok){const cfg=await r.json();const url=cfg.url||baseUrl;const key=cfg.url?(cfg.token||sessionToken):(token||sessionToken);if(url){const next=await fetchInvestData(url,key);if(!cancelled){setBaseUrl(url);setToken(key);setData(next);setLastSync(next.lastSync||new Date().toISOString());setConnectionMessage("Session restored. Connected to live data.");}}}}catch(e:any){if(!cancelled){setConnectionMessage(e?.message||"Could not reconnect to the saved server.");setLastError("Automatic reconnect failed: "+(e?.stack||e?.message||String(e)));setTab("Settings");}}})();return()=>{cancelled=true;};}, [loggedIn]);
 
   const total = data.portfolio.virtual_equity;
   const chartValues = useMemo(() => data.analytics.daily?.length ? data.analytics.daily.map(d => d.pnl).reduce((a, v, i) => { a.push((a[i - 1] || 0) + v); return a; }, [] as number[]) : [2, 5, 4, 8, 7, 10, 9, 13, 12, 16], [data.analytics.daily]);

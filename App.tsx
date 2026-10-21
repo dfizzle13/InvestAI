@@ -91,14 +91,14 @@ export default function App() {
           } catch { return; }
         }
         try {
-          const response = await fetch(a.url.replace(/\\/+$/, "") + "/api/v1/account/connection", { headers: { Authorization: "Bearer " + a.token, Accept: "application/json" } });
+          const response = await fetch(a.url.replace(/\/+$/, "") + "/api/v1/account/connection", { headers: { Authorization: "Bearer " + a.token, Accept: "application/json" } });
           if (response.ok) { const cfg = await response.json(); if (typeof cfg.url === "string" && cfg.url.trim()) { if (cancelled) return; setSessionToken(a.token); setAccountRole(a.role); setBaseUrl(cfg.url); setToken(typeof cfg.token === "string" ? cfg.token : ""); setLoggedIn(true); setConnectionMessage("Saved server connection found. Reconnecting…"); } }
         } catch {}
       }
       if (c.url && !cancelled) setConnectionMessage("Server URL saved.");
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, []);;
+  }, []);
 
   const sync = useCallback(async (quiet = false) => {
     if (!baseUrl.trim()) { setTab("Settings"); setConnectionMessage("Enter the HTTPS server URL first."); return; }

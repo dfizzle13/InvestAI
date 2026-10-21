@@ -92,7 +92,7 @@ export default function App() {
     setLoading(true);
     try {
       const c = await saveConnection(baseUrl, token);
-      if(sessionToken && authServerUrl){const saved=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/account/connection",{method:"PUT",headers:{"Content-Type":"application/json",Authorization:"Bearer "+sessionToken},body:JSON.stringify({url:c.url,token:c.token})});if(!saved.ok){const err=await saved.json().catch(()=>({}));throw new Error(err.detail||"Could not save this account connection on the server.");}}
+      if(sessionToken && authServerUrl){const saved=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/account/connection",{method:"PUT",headers:{"Content-Type":"application/json",Authorization:"Bearer "+sessionToken},body:JSON.stringify({url:c.url,token:c.token===sessionToken?"":c.token})});if(!saved.ok){const err=await saved.json().catch(()=>({}));throw new Error(err.detail||"Could not save this account connection on the server.");}}
       await testConnection(c.url, c.token);
       setConnectionMessage("Health check passed. Loading account data…");
       const next = await fetchInvestData(c.url, c.token);

@@ -9,7 +9,57 @@ const SESSION_KEY = "investai_session_token";
 const USER_KEY = "investai_username";
 const ROLE_KEY = "investai_role";
 const BIOMETRIC_KEY = "investai_biometric_enabled";
-const DEFAULT_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
+const DEFAULT_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";\n
+const PROFILE_INDEX_KEY = "investai_local_profiles";
+const ACTIVE_PROFILE_KEY = "investai_active_profile";
+const profileKey = (username: string) => encodeURIComponent(username.trim().toLowerCase());
+type LocalProfile = { username: string; password: string; role: string };
+async function readProfiles(): Promise<LocalProfile[]> {
+  try { const raw = await SecureStore.getItemAsync(PROFILE_INDEX_KEY); const value = raw ? JSON.parse(raw) : []; return Array.isArray(value) ? value : []; } catch { return []; }
+}
+export async function createLocalProfile(username: string, password: string) {
+  const name = username.trim();
+  if (name.length < 3) throw new Error("Username must be at least 3 characters.");
+  if (password.length < 8) throw new Error("Password must be at least 8 characters.");
+  const profiles = await readProfiles();
+  if (profiles.some(p => p.username.toLowerCase() === name.toLowerCase())) throw new Error("That username already exists on this device.");
+  profiles.push({ username:name, password, role:"user" });
+  await SecureStore.setItemAsync(PROFILE_INDEX_KEY, JSON.stringify(profiles));
+  await SecureStore.setItemAsync(ACTIVE_PROFILE_KEY, name.toLowerCase());
+  return { username:name, role:"user" };
+}
+export async function loginLocalProfile(username: string, password: string) {
+  const name = username.trim();
+  const profiles = await readProfiles();
+  const profile = profiles.find(p => p.username.toLowerCase() === name.toLowerCase());
+  if (!profile || profile.password !== password) throw new Error("Invalid username or password for a local InvestAI profile.");
+  const key = profileKey(profile.username);
+  const url = (await SecureStore.getItemAsync("investai_profile_url_" + key)) || "";
+  const token = (await SecureStore.getItemAsync("investai_profile_token_" + key)) || "";
+  await SecureStore.setItemAsync(ACTIVE_PROFILE_KEY, profile.username.toLowerCase());
+  return { username:profile.username, role:profile.role || "user", url:url.replace(/\\/+$/, ""), token };
+}
+export async function readActiveLocalProfile() {
+  try {
+    const active = await SecureStore.getItemAsync(ACTIVE_PROFILE_KEY);
+    if (!active) return null;
+    const profiles = await readProfiles();
+    const profile = profiles.find(p => p.username.toLowerCase() === active);
+    if (!profile) return null;
+    const key = profileKey(profile.username);
+    return { username:profile.username, role:profile.role || "user", url:(await SecureStore.getItemAsync("investai_profile_url_" + key)) || "", token:(await SecureStore.getItemAsync("investai_profile_token_" + key)) || "" };
+  } catch { return null; }
+}
+export async function saveLocalProfileConnection(username: string, url: string, token: string) {
+  const normalized = url.trim().replace(/\\/+$/, "");
+  if (normalized && !/^https:\\/\\//i.test(normalized) && !/^http:\\/\\/(localhost|127\\.0\\.0\\.1)(:\\d+)?$/i.test(normalized)) throw new Error("Use HTTPS for remote connections. HTTP is allowed only for localhost development.");
+  const key = profileKey(username);
+  await SecureStore.setItemAsync("investai_profile_url_" + key, normalized);
+  await SecureStore.setItemAsync("investai_profile_token_" + key, token.trim());
+  return { url:normalized, token:token.trim() };
+}
+export async function logoutLocalProfile() { await SecureStore.deleteItemAsync(ACTIVE_PROFILE_KEY); }
+
 
 export async function readSession() { if (Platform.OS === "web") return { url: "", token: "", username: "", role: "user" }; try { return { url: (await SecureStore.getItemAsync(AUTH_URL_KEY)) || "", token: (await SecureStore.getItemAsync(SESSION_KEY)) || "", username: (await SecureStore.getItemAsync(USER_KEY)) || "", role: (await SecureStore.getItemAsync(ROLE_KEY)) || "user" }; } catch { return { url: "", token: "", username: "", role: "user" }; } }
 export async function saveSession(url: string, token: string, username: string, role: string) { if (Platform.OS !== "web") { await SecureStore.setItemAsync(AUTH_URL_KEY, url.trim().replace(/\/+$/, "")); await SecureStore.setItemAsync(SESSION_KEY, token); await SecureStore.setItemAsync(USER_KEY, username); await SecureStore.setItemAsync(ROLE_KEY, role); } }

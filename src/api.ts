@@ -9,7 +9,8 @@ const SESSION_KEY = "investai_session_token";
 const USER_KEY = "investai_username";
 const ROLE_KEY = "investai_role";
 const BIOMETRIC_KEY = "investai_biometric_enabled";
-const DEFAULT_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";\n
+const DEFAULT_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
+
 const PROFILE_INDEX_KEY = "investai_local_profiles";
 const ACTIVE_PROFILE_KEY = "investai_active_profile";
 const profileKey = (username: string) => encodeURIComponent(username.trim().toLowerCase());

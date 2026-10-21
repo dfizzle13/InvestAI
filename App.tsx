@@ -53,7 +53,8 @@ export default function App() {
   const [loginName, setLoginName] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [showLoginServerSetup, setShowLoginServerSetup] = useState(false);\n  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [showLoginServerSetup, setShowLoginServerSetup] = useState(false);
+  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
   const [enableBiometrics, setEnableBiometrics] = useState(false);
   const [sessionToken, setSessionToken] = useState("");
   const [accountRole, setAccountRole] = useState("user");

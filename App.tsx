@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Status
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Stop, Path, Line, Circle } from "react-native-svg";
 import { Activity, ArrowDownLeft, ArrowUpRight, BrainCircuit, BriefcaseBusiness, ChartNoAxesCombined, ChevronRight, CircleHelp, Clock3, Cloud, CloudOff, Eye, EyeOff, RefreshCw, Settings2, ShieldCheck, Wallet } from "lucide-react-native";
-import { fetchInvestData, readConnection, readSession, saveSession, clearSession, saveConnection, testConnection, readBiometricPreference, saveBiometricPreference } from "./src/api";
+import { fetchInvestData, readConnection, readSession, saveSession, clearSession, saveConnection, testConnection, readBiometricPreference, saveBiometricPreference, createLocalProfile, loginLocalProfile, readActiveLocalProfile, saveLocalProfileConnection, logoutLocalProfile } from "./src/api";
 import * as LocalAuthentication from "expo-local-authentication";
 import { AppData, EMPTY_DATA, Position, Trade } from "./src/types";
 
@@ -53,7 +53,7 @@ export default function App() {
   const [loginName, setLoginName] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [showLoginServerSetup, setShowLoginServerSetup] = useState(false);
+  const [showLoginServerSetup, setShowLoginServerSetup] = useState(false);\n  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
   const [enableBiometrics, setEnableBiometrics] = useState(false);
   const [sessionToken, setSessionToken] = useState("");
   const [accountRole, setAccountRole] = useState("user");
@@ -77,25 +77,11 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([readConnection(), readSession(), readBiometricPreference()]).then(async ([c, a, biometricSaved]) => {
+    Promise.all([readConnection(), readSession(), readBiometricPreference(), readActiveLocalProfile()]).then(([c, _session, biometricSaved, profile]) => {
       if (cancelled) return;
-      setBaseUrl(c.url); setToken(c.token); setAuthServerUrl(a.url || c.url); setLoginName(a.username); setEnableBiometrics(biometricSaved);
-      if (a.token && a.url) {
-        if (biometricSaved) {
-          try {
-            const available = await LocalAuthentication.hasHardwareAsync();
-            const enrolled = available && await LocalAuthentication.isEnrolledAsync();
-            if (!available || !enrolled) { if (!cancelled) setAuthError("Biometric sign-in is enabled, but no enrolled biometrics are available. Sign in with your password and disable biometrics or enroll biometrics in device settings."); return; }
-            const unlock = await LocalAuthentication.authenticateAsync({ promptMessage: "Unlock InvestAI", cancelLabel: "Use password", disableDeviceFallback: true });
-            if (!unlock.success) return;
-          } catch { return; }
-        }
-        try {
-          const response = await fetch(a.url.replace(/\/+$/, "") + "/api/v1/account/connection", { headers: { Authorization: "Bearer " + a.token, Accept: "application/json" } });
-          if (response.ok) { const cfg = await response.json(); if (typeof cfg.url === "string" && cfg.url.trim()) { if (cancelled) return; setSessionToken(a.token); setAccountRole(a.role); setBaseUrl(cfg.url); setToken(typeof cfg.token === "string" ? cfg.token : ""); setLoggedIn(true); setConnectionMessage("Saved server connection found. Reconnecting…"); } }
-        } catch {}
-      }
-      if (c.url && !cancelled) setConnectionMessage("Server URL saved.");
+      setEnableBiometrics(biometricSaved);
+      if (profile) { setLoginName(profile.username); setBaseUrl(profile.url || ""); setToken(profile.token || ""); setAccountRole(profile.role || "user"); setConnectionMessage(profile.url && profile.token ? "Saved connection found. Sign in to validate it." : "Sign in or create a local profile. Server settings are optional."); }
+      else { setBaseUrl(""); setToken(""); setConnectionMessage("Create a local profile or sign in. Server settings are optional."); }
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
@@ -118,8 +104,15 @@ export default function App() {
   const connect = useCallback(async () => {
     setLoading(true);
     try {
-      const c = await saveConnection(baseUrl, token);
-      if(sessionToken && authServerUrl){const saved=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/account/connection",{method:"PUT",headers:{"Content-Type":"application/json",Authorization:"Bearer "+sessionToken},body:JSON.stringify({url:c.url,token:c.token===sessionToken?"":c.token})});if(!saved.ok){const err=await saved.json().catch(()=>({}));throw new Error(err.detail||"Could not save this account connection on the server.");}}
+      if (!loginName.trim()) throw new Error("Sign in to a local profile before saving server settings.");
+      const c = await saveLocalProfileConnection(loginName, baseUrl, token);
+      setBaseUrl(c.url); setToken(c.token); setLastError("");
+      if (!c.url || !c.token) {
+        setData(EMPTY_DATA);
+        setConnectionMessage("Settings saved to this local profile. A connection check will run only after both the server URL and bearer token are saved.");
+        Alert.alert("Settings saved", "Your server settings are stored with this local profile. Add both URL and token to validate the connection.");
+        return;
+      }
       await testConnection(c.url, c.token);
       setConnectionMessage("Health check passed. Loading account data…");
       const next = await fetchInvestData(c.url, c.token);
@@ -127,79 +120,55 @@ export default function App() {
       Alert.alert("Connected", "InvestAI received portfolio data from your server.");
     } catch (e: any) {
       const detail = `[${new Date().toISOString()}] Connect & sync failed\n${e?.stack || e?.message || String(e)}`;
-      setLastError(detail);
-      setConnectionMessage(e?.message || "Connection failed.");
+      setLastError(detail); setConnectionMessage(e?.message || "Connection failed."); setTab("Settings");
       Alert.alert("Connection unsuccessful", e?.message || "Check the server URL and token.", [{text:"Close",style:"cancel"}]);
     } finally { setLoading(false); }
-  }, [baseUrl, token]);
+  }, [baseUrl, token, loginName]);
 
-  const signIn = useCallback(async () => {
+    const signIn = useCallback(async () => {
     setLoading(true); setAuthError("");
-    const authUrl = authServerUrl.trim().replace(/\/+$/, "") || baseUrl.trim().replace(/\/+$/, "");
     try {
-      if(!authUrl) throw new Error("Enter your InvestAI server URL.");
-      const response = await fetch(authUrl + "/api/v1/auth/login", {method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify({username:loginName.trim(),password:loginPassword})});
-      const responseText = await response.text();
-      let body: any;
-      try { body = responseText ? JSON.parse(responseText) : {}; }
-      catch {
-        const preview = responseText.trim().slice(0, 240);
-        throw new Error("The login endpoint returned non-JSON content (HTTP " + response.status + "). " + (preview || "The response was empty.") + " Confirm the URL points to the updated InvestAI API and redeploy server/app.py.");
-      }
-      if(!response.ok) throw new Error(body.detail || body.message || ("Sign-in failed (HTTP " + response.status + ")."));
-      if (typeof body.access_token !== "string" || !body.access_token) throw new Error("The server returned JSON but no access_token. Confirm the updated InvestAI authentication backend is deployed.");
-      const authToken = body.access_token as string, role = body.user?.role || "user", user = body.user?.username || loginName.trim();
-      let biometricWarning = "";
+      const profile = isCreatingAccount ? await createLocalProfile(loginName, loginPassword) : await loginLocalProfile(loginName, loginPassword);
+      setLoginName(profile.username); setAccountRole(profile.role); setLoginPassword("");
+      await saveSession("", "", profile.username, profile.role);
+      setSessionToken(""); setLoggedIn(true); setAuthServerUrl("");
+      const saved = await readActiveLocalProfile();
+      const dataUrl = saved?.url || "", dataToken = saved?.token || "";
+      setBaseUrl(dataUrl); setToken(dataToken); setLastError("");
       if (enableBiometrics) {
-        try {
-          const available = await LocalAuthentication.hasHardwareAsync();
-          const enrolled = available && await LocalAuthentication.isEnrolledAsync();
-          if (available && enrolled) await saveBiometricPreference(true);
-          else { await saveBiometricPreference(false); setEnableBiometrics(false); biometricWarning = "Biometric sign-in was not enabled because this device has no enrolled biometrics."; }
-        } catch { await saveBiometricPreference(false); setEnableBiometrics(false); biometricWarning = "Biometric sign-in could not be enabled on this device."; }
+        try { const available = await LocalAuthentication.hasHardwareAsync(); const enrolled = available && await LocalAuthentication.isEnrolledAsync(); if (available && enrolled) await saveBiometricPreference(true); else { await saveBiometricPreference(false); setEnableBiometrics(false); } }
+        catch { await saveBiometricPreference(false); setEnableBiometrics(false); }
       } else await saveBiometricPreference(false);
-      await saveSession(authUrl,authToken,user,role);
-      setAuthServerUrl(authUrl); setSessionToken(authToken); setAccountRole(role); setLoginName(user); setLoginPassword(""); setLoggedIn(true);
-      if (biometricWarning) Alert.alert("Signed in", biometricWarning, [{text:"Close"}]);
-      let dataUrl = "", dataToken = "";
-      let hasSavedConnection = false;
-      try {
-        const saved = await fetch(authUrl+"/api/v1/account/connection",{headers:{Authorization:"Bearer "+authToken,Accept:"application/json"}});
-        if(saved.ok){const cfg=await saved.json();if(typeof cfg.url==="string" && cfg.url.trim()){dataUrl=cfg.url.trim();dataToken=typeof cfg.token==="string"?cfg.token:"";hasSavedConnection=true;}}
-      } catch {}
-      setBaseUrl(dataUrl);setToken(dataToken);
-      if (hasSavedConnection) {
+      if (dataUrl && dataToken) {
         try {
-          const next = await fetchInvestData(dataUrl,dataToken || authToken);
-          setData(next);setLastSync(next.lastSync||new Date().toISOString());setConnectionMessage("Signed in and connected. Live data loaded.");
-        } catch (connectionError: any) {
-          const message = connectionError?.message || String(connectionError);
-          setData(EMPTY_DATA);setConnectionMessage(message);setLastError("Automatic connection failed: "+(connectionError?.stack||message));setTab("Settings");
-          Alert.alert("Server connection failed", message, [{text:"Close",style:"cancel"}]);
+          await testConnection(dataUrl, dataToken);
+          const next = await fetchInvestData(dataUrl, dataToken);
+          setData(next); setLastSync(next.lastSync || new Date().toISOString()); setConnectionMessage("Signed in and connected. Live data loaded."); setTab("Overview");
+        } catch (err: any) {
+          const message = err?.message || String(err);
+          setData(EMPTY_DATA); setConnectionMessage("Server connection failed: " + message);
+          setLastError("Automatic connection validation failed: " + (err?.stack || message)); setTab("Settings");
         }
       } else {
-        setData(EMPTY_DATA);
-        setConnectionMessage("Signed in. No server connection is saved for this account yet; add it in Settings when ready.");
-        setTab("Settings");
+        setData(EMPTY_DATA); setConnectionMessage("Signed in. No complete server URL and bearer-token pair is saved for this profile."); setTab("Settings");
       }
-    } catch(e:any) {
-      setAuthError(e?.message||String(e));setConnectionMessage(e?.message||"Sign-in or server connection failed.");
-      Alert.alert("Sign-in / connection failed",e?.message||"Check the server URL and credentials.",[{text:"Close",style:"cancel"}]);
-      setLoggedIn(false);
-    } finally {setLoading(false);}
-  },[authServerUrl,baseUrl,loginName,loginPassword,enableBiometrics]);
+    } catch (err: any) { setAuthError(err?.message || String(err)); }
+    finally { setLoading(false); }
+  }, [loginName, loginPassword, isCreatingAccount, enableBiometrics]);
 
-  const signOut = useCallback(async () => { try { if(sessionToken) await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/auth/logout",{method:"POST",headers:{Authorization:"Bearer "+sessionToken}}); } catch {} await clearSession();await saveConnection("","");setBaseUrl(authServerUrl);setToken("");setLoggedIn(false);setSessionToken("");setAccountRole("user");setLoginPassword("");setTab("Overview"); },[sessionToken,authServerUrl]);
+  const signOut = useCallback(async () => {
+    await logoutLocalProfile();
+    setLoggedIn(false); setSessionToken(""); setAccountRole("user"); setLoginPassword("");
+    setData(EMPTY_DATA); setTab("Overview"); setAuthError("");
+  }, []);
 
-  const loadAdminUsers = useCallback(async () => {
+    const loadAdminUsers = useCallback(async () => {
     try { const r=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/admin/users",{headers:{Authorization:"Bearer "+sessionToken,Accept:"application/json"}});const j=await r.json();if(!r.ok)throw new Error(j.detail||"Could not load users");setAdminUsers(j.users||[]); } catch(e:any){Alert.alert("Admin error",e?.message||String(e),[{text:"Close",style:"cancel"}]);}
   },[authServerUrl,sessionToken]);
 
   const createAccount = useCallback(async () => {
     try { const r=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/admin/users",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+sessionToken},body:JSON.stringify({username:newUsername.trim(),password:newPassword,role:"user"})});const j=await r.json();if(!r.ok)throw new Error(j.detail||"Could not create account");setNewUsername("");setNewPassword("");await loadAdminUsers();Alert.alert("Account created","The new account is ready.",[{text:"Close"}]); } catch(e:any){Alert.alert("Account creation failed",e?.message||String(e),[{text:"Close",style:"cancel"}]);}
   },[authServerUrl,sessionToken,newUsername,newPassword,loadAdminUsers]);
-
-  useEffect(() => { if(!loggedIn || !sessionToken || !authServerUrl || !baseUrl.trim()) return; let cancelled=false; (async()=>{try{const r=await fetch(authServerUrl.replace(/\/+$/,"")+"/api/v1/account/connection",{headers:{Authorization:"Bearer "+sessionToken,Accept:"application/json"}});if(r.ok){const cfg=await r.json();const url=cfg.url||"";const key=cfg.token||sessionToken;if(url){const next=await fetchInvestData(url,key);if(!cancelled){setBaseUrl(url);setToken(key);setData(next);setLastSync(next.lastSync||new Date().toISOString());setConnectionMessage("Session restored. Connected to live data.");}}}}catch(e:any){if(!cancelled){setConnectionMessage(e?.message||"Could not reconnect to the saved server.");setLastError("Automatic reconnect failed: "+(e?.stack||e?.message||String(e)));setTab("Settings");}}})();return()=>{cancelled=true;};}, [loggedIn]);
 
   const total = data.portfolio.virtual_equity;
   const chartValues = useMemo(() => data.analytics.daily?.length ? data.analytics.daily.map(d => d.pnl).reduce((a, v, i) => { a.push((a[i - 1] || 0) + v); return a; }, [] as number[]) : [0], [data.analytics.daily]);
@@ -260,7 +229,7 @@ export default function App() {
   const pages: Record<Tab, () => React.ReactNode> = { Overview: overview, Positions: positionsPage, Activity: activityPage, Analytics: analyticsPage, Search: searchPage, Settings: settingsPage };
   const tabs: {key:Tab; icon:any}[] = [{key:"Overview",icon:ChartNoAxesCombined},{key:"Positions",icon:BriefcaseBusiness},{key:"Activity",icon:Activity},{key:"Analytics",icon:BrainCircuit},{key:"Search",icon:CircleHelp},{key:"Settings",icon:Settings2}];
 
-  if (!loggedIn) return <SafeAreaProvider><SafeAreaView edges={["top","bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg}/><ScrollView contentContainerStyle={styles.loginWrap} keyboardShouldPersistTaps="handled"><View style={styles.loginLogo}><ChartNoAxesCombined size={30} color={C.bg}/></View><Text style={styles.loginTitle}>InvestAI</Text><Text style={styles.loginSubtitle}>{showLoginServerSetup ? "Configure your account server." : "Secure access to your portfolio intelligence."}</Text>{showLoginServerSetup ? <Card><Text style={styles.fieldLabel}>INVESTAI SERVER URL</Text><TextInput value={authServerUrl || baseUrl} onChangeText={v=>{setAuthServerUrl(v);setBaseUrl(v);}} autoCapitalize="none" autoCorrect={false} keyboardType="url" placeholder="https://your-investai-server.com" placeholderTextColor="#687790" style={styles.input}/><Text style={styles.fieldHint}>This is configured separately and will not be requested each time you sign in.</Text><Pressable onPress={async()=>{try{const c=await saveConnection(authServerUrl || baseUrl,token);setAuthServerUrl(c.url);setBaseUrl(c.url);setShowLoginServerSetup(false);setAuthError("");}catch(e:any){setAuthError(e?.message||String(e));}}} style={styles.primaryButton}><ShieldCheck size={18} color={C.bg}/><Text style={styles.primaryButtonText}>Save server settings</Text></Pressable><Pressable onPress={()=>setShowLoginServerSetup(false)} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Back to sign in</Text></Pressable></Card> : <Card><Text style={styles.fieldLabel}>USERNAME</Text><TextInput value={loginName} onChangeText={setLoginName} autoCapitalize="none" autoCorrect={false} placeholder="Username" placeholderTextColor="#687790" style={styles.input}/><Text style={[styles.fieldLabel,{marginTop:18}]}>PASSWORD</Text><View style={styles.passwordWrap}><TextInput value={loginPassword} onChangeText={setLoginPassword} secureTextEntry={!showPassword} autoCapitalize="none" autoCorrect={false} placeholder="Password" placeholderTextColor="#687790" style={[styles.input,styles.passwordInput]}/><Pressable accessibilityRole="button" accessibilityLabel={showPassword?"Hide password characters":"Show password characters"} onPress={()=>setShowPassword(v=>!v)} style={styles.passwordToggle}>{showPassword?<EyeOff size={19} color={C.muted}/>:<Eye size={19} color={C.muted}/>}</Pressable></View><View style={styles.biometricRow}><View style={styles.biometricCopy}><Text style={styles.rowTitle}>Enable biometric sign-in</Text><Text style={styles.rowSubtitle}>Use your device fingerprint or face after successful sign-in.</Text></View><Switch value={enableBiometrics} onValueChange={setEnableBiometrics} trackColor={{false:C.border,true:"#52752D"}} thumbColor={enableBiometrics?C.green:C.muted}/></View>{authError?<Text selectable style={styles.errorText}>{authError}</Text>:null}<Pressable onPress={signIn} disabled={loading} style={[styles.primaryButton,loading&&{opacity:0.6}]}>{loading?<ActivityIndicator color={C.bg}/>:<ShieldCheck size={18} color={C.bg}/>}<Text style={styles.primaryButtonText}>{loading?"Signing in…":"Sign in securely"}</Text></Pressable><Pressable onPress={()=>{setShowLoginServerSetup(true);setAuthError("");}} style={styles.serverSetupLink}><Text style={styles.action}>Server setup</Text><Text style={styles.rowSubtitle}>{authServerUrl || baseUrl ? "Change saved server URL" : "Configure the server once"}</Text></Pressable></Card>}<Text style={styles.loginFoot}>Your account and connection settings are managed by your server administrator.</Text></ScrollView></SafeAreaView></SafeAreaProvider>;
+  if (!loggedIn) return <SafeAreaProvider><SafeAreaView edges={["top","bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg}/><ScrollView contentContainerStyle={styles.loginWrap} keyboardShouldPersistTaps="handled"><View style={styles.loginLogo}><ChartNoAxesCombined size={30} color={C.bg}/></View><Text style={styles.loginTitle}>InvestAI</Text><Text style={styles.loginSubtitle}>{isCreatingAccount ? "Create a profile stored securely on this device." : "Sign in to your local profile."}</Text><Card><Text style={styles.fieldLabel}>USERNAME</Text><TextInput value={loginName} onChangeText={setLoginName} autoCapitalize="none" autoCorrect={false} placeholder="Username" placeholderTextColor="#687790" style={styles.input}/><Text style={[styles.fieldLabel,{marginTop:18}]}>PASSWORD</Text><View style={styles.passwordWrap}><TextInput value={loginPassword} onChangeText={setLoginPassword} secureTextEntry={!showPassword} autoCapitalize="none" autoCorrect={false} placeholder="Password" placeholderTextColor="#687790" style={[styles.input,styles.passwordInput]}/><Pressable accessibilityRole="button" accessibilityLabel={showPassword?"Hide password characters":"Show password characters"} onPress={()=>setShowPassword(v=>!v)} style={styles.passwordToggle}>{showPassword?<EyeOff size={19} color={C.muted}/>:<Eye size={19} color={C.muted}/>}</Pressable></View><View style={styles.biometricRow}><View style={styles.biometricCopy}><Text style={styles.rowTitle}>Enable biometric sign-in</Text><Text style={styles.rowSubtitle}>Use your device fingerprint or face after successful sign-in.</Text></View><Switch value={enableBiometrics} onValueChange={setEnableBiometrics} trackColor={{false:C.border,true:"#52752D"}} thumbColor={enableBiometrics?C.green:C.muted}/></View>{authError?<Text selectable style={styles.errorText}>{authError}</Text>:null}<Pressable onPress={signIn} disabled={loading} style={[styles.primaryButton,loading&&{opacity:0.6}]}>{loading?<ActivityIndicator color={C.bg}/>:<ShieldCheck size={18} color={C.bg}/>}<Text style={styles.primaryButtonText}>{loading?(isCreatingAccount?"Creating profile…":"Signing in…"):(isCreatingAccount?"Create local account":"Sign in")}</Text></Pressable><Pressable onPress={()=>{setIsCreatingAccount(v=>!v);setAuthError("");}} style={styles.serverSetupLink}><Text style={styles.action}>{isCreatingAccount?"Already have a profile? Sign in":"New to InvestAI? Create account"}</Text></Pressable></Card><Text style={styles.loginFoot}>Your profile, server URL, and bearer token are stored locally on this device. Server connection checks run only when both URL and token are saved.</Text></ScrollView></SafeAreaView></SafeAreaProvider>;
 
   return <SafeAreaProvider><SafeAreaView edges={["top", "bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg} /><TopBar connected={!data.demo}/><View style={styles.main}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>sync(true)} tintColor={C.green} colors={[C.green]}/>}>{tab==="Overview" ? <View style={styles.pageHeading}><Text style={styles.pageTitle}>Good evening.</Text><Text style={styles.pageSubtitle}>Here's how your portfolio is doing.</Text></View> : null}{pages[tab]()}<View style={{height:18}}/></ScrollView></View><View style={styles.tabBar}>{tabs.map(({key,icon:Icon})=><Pressable key={key} onPress={()=>setTab(key)} style={styles.tabButton}><Icon size={20} color={tab===key?C.green:C.muted} strokeWidth={tab===key?2.5:1.8}/><Text style={[styles.tabLabel,tab===key&&{color:C.green}]}>{key==="Overview"?"Home":key}</Text>{tab===key?<View style={styles.tabIndicator}/>:null}</Pressable>)}</View></SafeAreaView></SafeAreaProvider>;
 }

@@ -82,7 +82,7 @@ export async function readConnection() {
 
 export async function saveConnection(url: string, token: string) {
   const normalized = url.trim().replace(/\/+$/, "");
-  if (normalized && !/^https:\/\//i.test(normalized) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(normalized)) {
+  if (normalized && !/^https:\/\//i.test(normalized) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(normalized)) throw new Error("Use HTTPS for remote connections. HTTP is allowed only for localhost development.");
     throw new Error("Use HTTPS for remote connections. HTTP is allowed only for localhost development.");
   }
   if (Platform.OS !== "web") {

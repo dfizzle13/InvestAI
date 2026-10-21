@@ -8,11 +8,14 @@ const AUTH_URL_KEY = "investai_auth_url";
 const SESSION_KEY = "investai_session_token";
 const USER_KEY = "investai_username";
 const ROLE_KEY = "investai_role";
+const BIOMETRIC_KEY = "investai_biometric_enabled";
 const DEFAULT_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "";
 
 export async function readSession() { if (Platform.OS === "web") return { url: "", token: "", username: "", role: "user" }; try { return { url: (await SecureStore.getItemAsync(AUTH_URL_KEY)) || "", token: (await SecureStore.getItemAsync(SESSION_KEY)) || "", username: (await SecureStore.getItemAsync(USER_KEY)) || "", role: (await SecureStore.getItemAsync(ROLE_KEY)) || "user" }; } catch { return { url: "", token: "", username: "", role: "user" }; } }
 export async function saveSession(url: string, token: string, username: string, role: string) { if (Platform.OS !== "web") { await SecureStore.setItemAsync(AUTH_URL_KEY, url.trim().replace(/\/+$/, "")); await SecureStore.setItemAsync(SESSION_KEY, token); await SecureStore.setItemAsync(USER_KEY, username); await SecureStore.setItemAsync(ROLE_KEY, role); } }
 export async function clearSession() { if (Platform.OS !== "web") { await SecureStore.deleteItemAsync(SESSION_KEY); await SecureStore.deleteItemAsync(USER_KEY); await SecureStore.deleteItemAsync(ROLE_KEY); } }
+export async function readBiometricPreference() { if (Platform.OS === "web") return false; try { return (await SecureStore.getItemAsync(BIOMETRIC_KEY)) === "true"; } catch { return false; } }
+export async function saveBiometricPreference(enabled: boolean) { if (Platform.OS !== "web") await SecureStore.setItemAsync(BIOMETRIC_KEY, enabled ? "true" : "false"); }
 
 export async function readConnection() {
   let url = DEFAULT_URL;

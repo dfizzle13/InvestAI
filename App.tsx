@@ -99,7 +99,8 @@ export default function App() {
     } catch (e: any) {
       const detail = `[${new Date().toISOString()}] Refresh data failed\n${e?.stack || e?.message || String(e)}`;
       setLastError(detail);
-      setConnectionMessage(e?.message || "Could not connect. Check the URL, server, and token.");\n      setTab("Settings");
+      setConnectionMessage(e?.message || "Could not connect. Check the URL, server, and token.");
+      setTab("Settings");
       if (!quiet) Alert.alert("Connection unsuccessful", e?.message || "Check server settings.", [{text:"Close",style:"cancel"}]);
     } finally { setLoading(false); setRefreshing(false); }
   }, [baseUrl, token, loginName]);

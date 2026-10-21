@@ -84,6 +84,23 @@ export async function saveLocalProfileConnection(username: string, url: string, 
   await SecureStore.setItemAsync("investai_profile_token_" + key, token.trim());
   return { url:normalized, token:token.trim() };
 }
+export async function readLocalProfileBiometrics(username: string) {
+  const key = profileKey(username);
+  return (await SecureStore.getItemAsync("investai_profile_biometrics_" + key)) === "true";
+}
+export async function saveLocalProfileBiometrics(username: string, enabled: boolean) {
+  const profiles = await readProfiles();
+  if (!profiles.some(p => p.username.toLowerCase() === username.trim().toLowerCase())) {
+    throw new Error("Sign in to an existing local profile before enabling biometric sign-in.");
+  }
+  await SecureStore.setItemAsync("investai_profile_biometrics_" + profileKey(username), enabled ? "true" : "false");
+}
+export async function readLocalProfilePassword(username: string) {
+  const profiles = await readProfiles();
+  const profile = profiles.find(p => p.username.toLowerCase() === username.trim().toLowerCase());
+  if (!profile) throw new Error("Local profile not found on this device.");
+  return profile.password;
+}
 export async function logoutLocalProfile() { await SecureStore.deleteItemAsync(ACTIVE_PROFILE_KEY); }
 
 

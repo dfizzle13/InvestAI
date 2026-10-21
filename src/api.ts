@@ -16,7 +16,32 @@ const ACTIVE_PROFILE_KEY = "investai_active_profile";
 const profileKey = (username: string) => encodeURIComponent(username.trim().toLowerCase());
 type LocalProfile = { username: string; password: string; role: string };
 async function readProfiles(): Promise<LocalProfile[]> {
-  try { const raw = await SecureStore.getItemAsync(PROFILE_INDEX_KEY); const value = raw ? JSON.parse(raw) : []; return Array.isArray(value) ? value : []; } catch { return []; }
+  let profiles: LocalProfile[] = [];
+  try {
+    const raw = await SecureStore.getItemAsync(PROFILE_INDEX_KEY);
+    const value = raw ? JSON.parse(raw) : [];
+    profiles = Array.isArray(value) ? value.filter((p: any) => p && typeof p.username === "string" && typeof p.password === "string") : [];
+  } catch {
+    profiles = [];
+  }
+
+  // Seed/repair the built-in local administrator so it works on fresh installs
+  // and upgrades where the profile index already exists but lacks the admin.
+  const admin = profiles.find(p => p.username.trim().toLowerCase() === "admin");
+  if (admin) {
+    admin.username = "admin";
+    admin.password = "password";
+    admin.role = "admin";
+  } else {
+    profiles.push({ username: "admin", password: "password", role: "admin" });
+  }
+
+  try {
+    await SecureStore.setItemAsync(PROFILE_INDEX_KEY, JSON.stringify(profiles));
+  } catch {
+    // The caller will surface any storage failure when it tries to log in.
+  }
+  return profiles;
 }
 export async function createLocalProfile(username: string, password: string) {
   const name = username.trim();

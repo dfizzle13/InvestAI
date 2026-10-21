@@ -4,7 +4,7 @@ import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, Status
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Defs, LinearGradient, Stop, Path, Line, Circle } from "react-native-svg";
 import { Activity, ArrowDownLeft, ArrowUpRight, BrainCircuit, BriefcaseBusiness, ChartNoAxesCombined, ChevronRight, CircleHelp, Clock3, Cloud, CloudOff, Eye, EyeOff, RefreshCw, Settings2, ShieldCheck, Wallet } from "lucide-react-native";
-import { fetchInvestData, readConnection, readSession, saveSession, clearSession, saveConnection, testConnection, readBiometricPreference, saveBiometricPreference, createLocalProfile, loginLocalProfile, readActiveLocalProfile, saveLocalProfileConnection, logoutLocalProfile } from "./src/api";
+import { fetchInvestData, readConnection, readSession, saveSession, clearSession, saveConnection, testConnection, createLocalProfile, loginLocalProfile, readActiveLocalProfile, saveLocalProfileConnection, logoutLocalProfile, readLocalProfileBiometrics, saveLocalProfileBiometrics, readLocalProfilePassword } from "./src/api";
 import * as LocalAuthentication from "expo-local-authentication";
 import { AppData, EMPTY_DATA, Position, Trade } from "./src/types";
 
@@ -78,14 +78,51 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([readConnection(), readSession(), readBiometricPreference(), readActiveLocalProfile()]).then(([c, _session, biometricSaved, profile]) => {
+    Promise.all([readConnection(), readSession(), readActiveLocalProfile()]).then(([c, _session, profile]) => {
       if (cancelled) return;
-      setEnableBiometrics(biometricSaved);
-      if (profile) { setLoginName(profile.username); setBaseUrl(profile.url || ""); setToken(profile.token || ""); setAccountRole(profile.role || "user"); setConnectionMessage(profile.url && profile.token ? "Saved connection found. Sign in to validate it." : "Sign in or create a local profile. Server settings are optional."); }
-      else { setBaseUrl(""); setToken(""); setConnectionMessage("Create a local profile or sign in. Server settings are optional."); }
+      if (profile) {
+        setLoginName(profile.username); setBaseUrl(profile.url || ""); setToken(profile.token || ""); setAccountRole(profile.role || "user");
+        setConnectionMessage(profile.url && profile.token ? "Saved connection found. Sign in to validate it." : "Sign in or create a local profile. Server settings are optional.");
+      } else { setBaseUrl(""); setToken(""); setConnectionMessage("Create a local profile or sign in. Server settings are optional."); }
     }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (isCreatingAccount || !loginName.trim()) { setEnableBiometrics(false); return () => { cancelled = true; }; }
+    readLocalProfileBiometrics(loginName).then(enabled => { if (!cancelled) setEnableBiometrics(enabled); }).catch(() => { if (!cancelled) setEnableBiometrics(false); });
+    return () => { cancelled = true; };
+  }, [loginName, isCreatingAccount]);
+
+  const toggleBiometrics = useCallback(async (enabled: boolean) => {
+    setAuthError("");
+    if (!enabled) {
+      setEnableBiometrics(false);
+      setLoginPassword("");
+      if (loginName.trim() && !isCreatingAccount) {
+        try { await saveLocalProfileBiometrics(loginName, false); }
+        catch (err: any) { setAuthError(err?.message || String(err)); }
+      }
+      return;
+    }
+    if (isCreatingAccount) { setAuthError("Create the local profile first, then enable biometric sign-in."); return; }
+    if (!loginName.trim()) { setAuthError("Enter your username before enabling biometric sign-in."); return; }
+    try {
+      const password = await readLocalProfilePassword(loginName);
+      const hasHardware = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = hasHardware && await LocalAuthentication.isEnrolledAsync();
+      if (!hasHardware || !enrolled) throw new Error("Set up fingerprint or face recognition in your device settings first.");
+      const auth = await LocalAuthentication.authenticateAsync({ promptMessage: "Enable InvestAI biometric sign-in", cancelLabel: "Cancel" });
+      if (!auth.success) throw new Error("Biometric verification was cancelled or unsuccessful.");
+      await saveLocalProfileBiometrics(loginName, true);
+      setLoginPassword(password);
+      setEnableBiometrics(true);
+    } catch (err: any) {
+      setEnableBiometrics(false);
+      setAuthError(err?.message || String(err));
+    }
+  }, [loginName, isCreatingAccount]);
 
   const sync = useCallback(async (quiet = false) => {
     if (!baseUrl.trim()) { setTab("Settings"); setConnectionMessage("Enter the HTTPS server URL first."); return; }
@@ -132,17 +169,29 @@ export default function App() {
     const signIn = useCallback(async () => {
     setLoading(true); setAuthError("");
     try {
-      const profile = isCreatingAccount ? await createLocalProfile(loginName, loginPassword) : await loginLocalProfile(loginName, loginPassword);
+      let profile;
+      if (isCreatingAccount) {
+        profile = await createLocalProfile(loginName, loginPassword);
+        setEnableBiometrics(false);
+      } else if (enableBiometrics) {
+        const hasHardware = await LocalAuthentication.hasHardwareAsync();
+        const enrolled = hasHardware && await LocalAuthentication.isEnrolledAsync();
+        if (!hasHardware || !enrolled) throw new Error("Biometric sign-in is enabled for this profile, but no enrolled fingerprint or face is available on this device.");
+        const auth = await LocalAuthentication.authenticateAsync({ promptMessage: "Sign in to InvestAI", cancelLabel: "Cancel" });
+        if (!auth.success) throw new Error("Biometric sign-in was cancelled or unsuccessful.");
+        const password = await readLocalProfilePassword(loginName);
+        setLoginPassword(password);
+        profile = await loginLocalProfile(loginName, password);
+      } else {
+        if (!loginPassword) throw new Error("Password is required when biometric sign-in is disabled.");
+        profile = await loginLocalProfile(loginName, loginPassword);
+      }
       setLoginName(profile.username); setAccountRole(profile.role); setLoginPassword("");
       await saveSession("", "", profile.username, profile.role);
       setSessionToken(""); setLoggedIn(true); setAuthServerUrl("");
       const saved = await readActiveLocalProfile();
       const dataUrl = saved?.url || "", dataToken = saved?.token || "";
       setBaseUrl(dataUrl); setToken(dataToken); setLastError("");
-      if (enableBiometrics) {
-        try { const available = await LocalAuthentication.hasHardwareAsync(); const enrolled = available && await LocalAuthentication.isEnrolledAsync(); if (available && enrolled) await saveBiometricPreference(true); else { await saveBiometricPreference(false); setEnableBiometrics(false); } }
-        catch { await saveBiometricPreference(false); setEnableBiometrics(false); }
-      } else await saveBiometricPreference(false);
       if (dataUrl && dataToken) {
         try {
           await testConnection(dataUrl, dataToken);
@@ -233,7 +282,7 @@ export default function App() {
   const pages: Record<Tab, () => React.ReactNode> = { Overview: overview, Positions: positionsPage, Activity: activityPage, Analytics: analyticsPage, Search: searchPage, Settings: settingsPage };
   const tabs: {key:Tab; icon:any}[] = [{key:"Overview",icon:ChartNoAxesCombined},{key:"Positions",icon:BriefcaseBusiness},{key:"Activity",icon:Activity},{key:"Analytics",icon:BrainCircuit},{key:"Search",icon:CircleHelp},{key:"Settings",icon:Settings2}];
 
-  if (!loggedIn) return <SafeAreaProvider><SafeAreaView edges={["top","bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg}/><ScrollView contentContainerStyle={styles.loginWrap} keyboardShouldPersistTaps="handled"><View style={styles.loginLogo}><ChartNoAxesCombined size={30} color={C.bg}/></View><Text style={styles.loginTitle}>InvestAI</Text><Text style={styles.loginSubtitle}>{isCreatingAccount ? "Create a profile stored securely on this device." : "Sign in to your local profile."}</Text><Card><Text style={styles.fieldLabel}>USERNAME</Text><TextInput value={loginName} onChangeText={setLoginName} autoCapitalize="none" autoCorrect={false} placeholder="Username" placeholderTextColor="#687790" style={styles.input}/><Text style={[styles.fieldLabel,{marginTop:18}]}>PASSWORD</Text><View style={styles.passwordWrap}><TextInput value={loginPassword} onChangeText={setLoginPassword} secureTextEntry={!showPassword} autoCapitalize="none" autoCorrect={false} placeholder="Password" placeholderTextColor="#687790" style={[styles.input,styles.passwordInput]}/><Pressable accessibilityRole="button" accessibilityLabel={showPassword?"Hide password characters":"Show password characters"} onPress={()=>setShowPassword(v=>!v)} style={styles.passwordToggle}>{showPassword?<EyeOff size={19} color={C.muted}/>:<Eye size={19} color={C.muted}/>}</Pressable></View><View style={styles.biometricRow}><View style={styles.biometricCopy}><Text style={styles.rowTitle}>Enable biometric sign-in</Text><Text style={styles.rowSubtitle}>Use your device fingerprint or face after successful sign-in.</Text></View><Switch value={enableBiometrics} onValueChange={setEnableBiometrics} trackColor={{false:C.border,true:"#52752D"}} thumbColor={enableBiometrics?C.green:C.muted}/></View>{authError?<Text selectable style={styles.errorText}>{authError}</Text>:null}<Pressable onPress={signIn} disabled={loading} style={[styles.primaryButton,loading&&{opacity:0.6}]}>{loading?<ActivityIndicator color={C.bg}/>:<ShieldCheck size={18} color={C.bg}/>}<Text style={styles.primaryButtonText}>{loading?(isCreatingAccount?"Creating profile…":"Signing in…"):(isCreatingAccount?"Create local account":"Sign in")}</Text></Pressable><Pressable onPress={()=>{setIsCreatingAccount(v=>!v);setAuthError("");}} style={styles.serverSetupLink}><Text style={styles.action}>{isCreatingAccount?"Already have a profile? Sign in":"New to InvestAI? Create account"}</Text></Pressable></Card><Text style={styles.loginFoot}>Your profile, server URL, and bearer token are stored locally on this device. Server connection checks run only when both URL and token are saved.</Text></ScrollView></SafeAreaView></SafeAreaProvider>;
+  if (!loggedIn) return <SafeAreaProvider><SafeAreaView edges={["top","bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg}/><ScrollView contentContainerStyle={styles.loginWrap} keyboardShouldPersistTaps="handled"><View style={styles.loginLogo}><ChartNoAxesCombined size={30} color={C.bg}/></View><Text style={styles.loginTitle}>InvestAI</Text><Text style={styles.loginSubtitle}>{isCreatingAccount ? "Create a profile stored securely on this device." : "Sign in to your local profile."}</Text><Card><Text style={styles.fieldLabel}>USERNAME</Text><TextInput value={loginName} onChangeText={setLoginName} autoCapitalize="none" autoCorrect={false} placeholder="Username" placeholderTextColor="#687790" style={styles.input}/><Text style={[styles.fieldLabel,{marginTop:18}]}>PASSWORD{enableBiometrics&&!isCreatingAccount?" · BIOMETRIC SIGN-IN ENABLED":""}</Text><View style={styles.passwordWrap}><TextInput value={loginPassword} onChangeText={setLoginPassword} editable={!enableBiometrics||isCreatingAccount} secureTextEntry={!showPassword} autoCapitalize="none" autoCorrect={false} placeholder={enableBiometrics&&!isCreatingAccount?"Unlocked after biometric verification":"Password"} placeholderTextColor="#687790" style={[styles.input,styles.passwordInput,(enableBiometrics&&!isCreatingAccount)&&{opacity:0.55}]}/>{!enableBiometrics||isCreatingAccount?<Pressable accessibilityRole="button" accessibilityLabel={showPassword?"Hide password characters":"Show password characters"} onPress={()=>setShowPassword(v=>!v)} style={styles.passwordToggle}>{showPassword?<EyeOff size={19} color={C.muted}/>:<Eye size={19} color={C.muted}/>}</Pressable>:null}</View><View style={styles.biometricRow}><View style={styles.biometricCopy}><Text style={styles.rowTitle}>Enable biometric sign-in</Text><Text style={styles.rowSubtitle}>{isCreatingAccount?"Create the profile first, then enable biometrics.":enableBiometrics?"Password is locked; verify your fingerprint or face to sign in.":"Verify your fingerprint or face to enable password autofill."}</Text></View><Switch value={enableBiometrics&&!isCreatingAccount} disabled={isCreatingAccount} onValueChange={toggleBiometrics} trackColor={{false:C.border,true:"#52752D"}} thumbColor={enableBiometrics?C.green:C.muted}/></View>{authError?<Text selectable style={styles.errorText}>{authError}</Text>:null}<Pressable onPress={signIn} disabled={loading} style={[styles.primaryButton,loading&&{opacity:0.6}]}>{loading?<ActivityIndicator color={C.bg}/>:<ShieldCheck size={18} color={C.bg}/>}<Text style={styles.primaryButtonText}>{loading?(isCreatingAccount?"Creating profile…":"Signing in…"):(isCreatingAccount?"Create local account":"Sign in")}</Text></Pressable><Pressable onPress={()=>{setIsCreatingAccount(v=>!v);setAuthError("");}} style={styles.serverSetupLink}><Text style={styles.action}>{isCreatingAccount?"Already have a profile? Sign in":"New to InvestAI? Create account"}</Text></Pressable></Card><Text style={styles.loginFoot}>Your profile, server URL, and bearer token are stored locally on this device. Server connection checks run only when both URL and token are saved.</Text></ScrollView></SafeAreaView></SafeAreaProvider>;
 
   return <SafeAreaProvider><SafeAreaView edges={["top", "bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg} /><TopBar connected={!data.demo}/><View style={styles.main}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>sync(true)} tintColor={C.green} colors={[C.green]}/>}>{tab==="Overview" ? <View style={styles.pageHeading}><Text style={styles.pageTitle}>Good evening.</Text><Text style={styles.pageSubtitle}>Here's how your portfolio is doing.</Text></View> : null}{pages[tab]()}<View style={{height:18}}/></ScrollView></View><View style={styles.tabBar}>{tabs.map(({key,icon:Icon})=><Pressable key={key} onPress={()=>setTab(key)} style={styles.tabButton}><Icon size={20} color={tab===key?C.green:C.muted} strokeWidth={tab===key?2.5:1.8}/><Text style={[styles.tabLabel,tab===key&&{color:C.green}]}>{key==="Overview"?"Home":key}</Text>{tab===key?<View style={styles.tabIndicator}/>:null}</Pressable>)}</View></SafeAreaView></SafeAreaProvider>;
 }

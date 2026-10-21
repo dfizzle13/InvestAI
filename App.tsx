@@ -71,7 +71,7 @@ export default function App() {
   const [horizon, setHorizon] = useState<Horizon>("Forever");
   const [searchQuery, setSearchQuery] = useState("");
 
-  useEffect(() => { Promise.all([readConnection(),readSession()]).then(([c,a]) => { setBaseUrl(c.url); setToken(c.token); setAuthServerUrl(a.url || c.url); setLoginName(a.username); if(a.token && a.url && c.url && c.token){setSessionToken(a.token);setAccountRole(a.role);setLoggedIn(true);} if (c.url) setConnectionMessage("Server URL saved."); }).catch(() => {}); }, []);
+  useEffect(() => { Promise.all([readConnection(),readSession()]).then(([c,a]) => { setBaseUrl(c.url); setToken(c.token); setAuthServerUrl(a.url || c.url); setLoginName(a.username); if(a.token && a.url && c.url){setSessionToken(a.token);setAccountRole(a.role);setLoggedIn(true);} if (c.url) setConnectionMessage("Server URL saved."); }).catch(() => {}); }, []);
 
   const sync = useCallback(async (quiet = false) => {
     if (!baseUrl.trim()) { setTab("Settings"); setConnectionMessage("Enter the HTTPS server URL first."); return; }
@@ -125,8 +125,14 @@ export default function App() {
       } catch {}
       setBaseUrl(dataUrl);setToken(dataToken);
       if (hasSavedConnection) {
-        const next = await fetchInvestData(dataUrl,dataToken || authToken);
-        setData(next);setLastSync(next.lastSync||new Date().toISOString());setConnectionMessage("Signed in and connected. Live data loaded.");
+        try {
+          const next = await fetchInvestData(dataUrl,dataToken || authToken);
+          setData(next);setLastSync(next.lastSync||new Date().toISOString());setConnectionMessage("Signed in and connected. Live data loaded.");
+        } catch (connectionError: any) {
+          const message = connectionError?.message || String(connectionError);
+          setData(EMPTY_DATA);setConnectionMessage(message);setLastError("Automatic connection failed: "+(connectionError?.stack||message));setTab("Settings");
+          Alert.alert("Server connection failed", message, [{text:"Close",style:"cancel"}]);
+        }
       } else {
         setData(EMPTY_DATA);
         setConnectionMessage("Signed in. No server connection is saved for this account yet; add it in Settings when ready.");

@@ -90,7 +90,9 @@ export default function App() {
     if (!baseUrl.trim()) { setTab("Settings"); setConnectionMessage("Enter the HTTPS server URL first."); return; }
     if (!quiet) setLoading(true); else setRefreshing(true);
     try {
-      const c = await saveConnection(baseUrl, token);
+      if (!baseUrl.trim() || !token.trim()) throw new Error("Both the server URL and bearer token are required to validate and refresh the connection.");
+      const c = await saveLocalProfileConnection(loginName, baseUrl, token);
+      await testConnection(c.url, c.token);
       const next = await fetchInvestData(c.url, c.token);
       setData(next); setLastSync(next.lastSync || new Date().toISOString()); setConnectionMessage("Connected securely. Live data loaded.");
     } catch (e: any) {
@@ -99,7 +101,7 @@ export default function App() {
       setConnectionMessage(e?.message || "Could not connect. Check the URL, server, and token.");
       if (!quiet) Alert.alert("Connection unsuccessful", e?.message || "Check server settings.", [{text:"Close",style:"cancel"}]);
     } finally { setLoading(false); setRefreshing(false); }
-  }, [baseUrl, token]);
+  }, [baseUrl, token, loginName]);
 
   const connect = useCallback(async () => {
     setLoading(true);

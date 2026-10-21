@@ -37,7 +37,7 @@ export async function loginLocalProfile(username: string, password: string) {
   const url = (await SecureStore.getItemAsync("investai_profile_url_" + key)) || "";
   const token = (await SecureStore.getItemAsync("investai_profile_token_" + key)) || "";
   await SecureStore.setItemAsync(ACTIVE_PROFILE_KEY, profile.username.toLowerCase());
-  return { username:profile.username, role:profile.role || "user", url:url.replace(/\\/+$/, ""), token };
+  return { username:profile.username, role:profile.role || "user", url:url.replace(/\/+$/, ""), token };
 }
 export async function readActiveLocalProfile() {
   try {
@@ -51,8 +51,8 @@ export async function readActiveLocalProfile() {
   } catch { return null; }
 }
 export async function saveLocalProfileConnection(username: string, url: string, token: string) {
-  const normalized = url.trim().replace(/\\/+$/, "");
-  if (normalized && !/^https:\\/\\//i.test(normalized) && !/^http:\\/\\/(localhost|127\\.0\\.0\\.1)(:\\d+)?$/i.test(normalized)) throw new Error("Use HTTPS for remote connections. HTTP is allowed only for localhost development.");
+  const normalized = url.trim().replace(/\/+$/, "");
+  if (normalized && !/^https:\/\//i.test(normalized) && !/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(normalized)) throw new Error("Use HTTPS for remote connections. HTTP is allowed only for localhost development.");
   const key = profileKey(username);
   await SecureStore.setItemAsync("investai_profile_url_" + key, normalized);
   await SecureStore.setItemAsync("investai_profile_token_" + key, token.trim());

@@ -48,6 +48,7 @@ function TopBar({ connected }: { connected: boolean }) { return <View style={sty
 export default function App() {
   const [tab, setTab] = useState<Tab>("Overview");
   const [data, setData] = useState<AppData>(EMPTY_DATA);
+  const [isConnected, setIsConnected] = useState(false);
   const [baseUrl, setBaseUrl] = useState("");
   const [authServerUrl, setAuthServerUrl] = useState("");
   const [loginName, setLoginName] = useState("");
@@ -124,6 +125,22 @@ export default function App() {
     }
   }, [loginName, isCreatingAccount]);
 
+  useEffect(() => {
+    if (!loggedIn || !baseUrl.trim() || !token.trim()) { setIsConnected(false); return; }
+    let cancelled = false;
+    const checkConnection = async () => {
+      try {
+        await testConnection(baseUrl, token);
+        if (!cancelled) setIsConnected(true);
+      } catch {
+        if (!cancelled) setIsConnected(false);
+      }
+    };
+    void checkConnection();
+    const interval = setInterval(checkConnection, 30000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [loggedIn, baseUrl, token]);
+
   const sync = useCallback(async (quiet = false) => {
     if (!baseUrl.trim()) { setTab("Settings"); setConnectionMessage("Enter the HTTPS server URL first."); return; }
     if (!quiet) setLoading(true); else setRefreshing(true);
@@ -132,10 +149,10 @@ export default function App() {
       const c = await saveLocalProfileConnection(loginName, baseUrl, token);
       await testConnection(c.url, c.token);
       const next = await fetchInvestData(c.url, c.token);
-      setData(next); setLastSync(next.lastSync || new Date().toISOString()); setConnectionMessage("Connected securely. Live data loaded.");
+      setData(next); setIsConnected(true); setLastSync(next.lastSync || new Date().toISOString()); setConnectionMessage("Connected securely. Live data loaded.");
     } catch (e: any) {
       const detail = `[${new Date().toISOString()}] Refresh data failed\n${e?.stack || e?.message || String(e)}`;
-      setLastError(detail);
+      setLastError(detail); setIsConnected(false);
       setConnectionMessage(e?.message || "Could not connect. Check the URL, server, and token.");
       setTab("Settings");
       if (!quiet) Alert.alert("Connection unsuccessful", e?.message || "Check server settings.", [{text:"Close",style:"cancel"}]);
@@ -157,11 +174,11 @@ export default function App() {
       await testConnection(c.url, c.token);
       setConnectionMessage("Health check passed. Loading account data…");
       const next = await fetchInvestData(c.url, c.token);
-      setData(next); setLastSync(next.lastSync || new Date().toISOString()); setConnectionMessage("Connected securely. Live data loaded.");
+      setData(next); setIsConnected(true); setLastSync(next.lastSync || new Date().toISOString()); setConnectionMessage("Connected securely. Live data loaded.");
       Alert.alert("Connected", "InvestAI received portfolio data from your server.");
     } catch (e: any) {
       const detail = `[${new Date().toISOString()}] Connect & sync failed\n${e?.stack || e?.message || String(e)}`;
-      setLastError(detail); setConnectionMessage(e?.message || "Connection failed."); setTab("Settings");
+      setLastError(detail); setIsConnected(false); setConnectionMessage(e?.message || "Connection failed."); setTab("Settings");
       Alert.alert("Connection unsuccessful", e?.message || "Check the server URL and token.", [{text:"Close",style:"cancel"}]);
     } finally { setLoading(false); }
   }, [baseUrl, token, loginName]);
@@ -196,14 +213,14 @@ export default function App() {
         try {
           await testConnection(dataUrl, dataToken);
           const next = await fetchInvestData(dataUrl, dataToken);
-          setData(next); setLastSync(next.lastSync || new Date().toISOString()); setConnectionMessage("Signed in and connected. Live data loaded."); setTab("Overview");
+          setData(next); setIsConnected(true); setLastSync(next.lastSync || new Date().toISOString()); setConnectionMessage("Signed in and connected. Live data loaded."); setTab("Overview");
         } catch (err: any) {
           const message = err?.message || String(err);
-          setData(EMPTY_DATA); setConnectionMessage("Server connection failed: " + message);
+          setData(EMPTY_DATA); setIsConnected(false); setConnectionMessage("Server connection failed: " + message);
           setLastError("Automatic connection validation failed: " + (err?.stack || message)); setTab("Settings");
         }
       } else {
-        setData(EMPTY_DATA); setConnectionMessage("Signed in. No complete server URL and bearer-token pair is saved for this profile."); setTab("Settings");
+        setData(EMPTY_DATA); setIsConnected(false); setConnectionMessage("Signed in. No complete server URL and bearer-token pair is saved for this profile."); setTab("Settings");
       }
     } catch (err: any) { setAuthError(err?.message || String(err)); }
     finally { setLoading(false); }
@@ -211,7 +228,7 @@ export default function App() {
 
   const signOut = useCallback(async () => {
     await logoutLocalProfile();
-    setLoggedIn(false); setSessionToken(""); setAccountRole("user"); setLoginPassword("");
+    setLoggedIn(false); setIsConnected(false); setSessionToken(""); setAccountRole("user"); setLoginPassword("");
     setData(EMPTY_DATA); setTab("Overview"); setAuthError("");
   }, []);
 
@@ -268,7 +285,7 @@ export default function App() {
 
   const header = (title: string, subtitle: string) => <View style={styles.pageHeading}><Text style={styles.pageTitle}>{title}</Text><Text style={styles.pageSubtitle}>{subtitle}</Text></View>;
 
-  const overview = () => <><Card style={styles.hero}><View style={styles.heroTop}><Label style={{ color: "#C4D0E4" }}>TOTAL VIRTUAL EQUITY</Label><View style={styles.heroIcon}><Wallet size={18} color={C.green}/></View></View><Text style={styles.heroValue}>{money(total)}</Text><View style={styles.heroChange}><ArrowUpRight size={15} color={C.green}/><Text style={styles.heroChangeText}>{signedMoney(data.portfolio.daily_pnl)} today · {pct(data.portfolio.daily_pnl_percent)}</Text></View><View style={styles.chartLabels}><Text style={styles.chartCaption}>Portfolio trend</Text><Text style={styles.chartCaption}>Last 5 sessions</Text></View><PerformanceChart values={chartValues}/><View style={styles.chartFoot}><Text style={styles.chartCaption}>REALIZED + UNREALIZED P/L</Text><Text style={[styles.chartFootValue, { color: data.portfolio.realized_pnl + data.portfolio.unrealized_pnl >= 0 ? C.green : C.red }]}>{signedMoney(data.portfolio.realized_pnl + data.portfolio.unrealized_pnl)}</Text></View></Card><View style={styles.metricsGrid}><Metric title="Realized P/L" value={signedMoney(data.portfolio.realized_pnl)} positive={data.portfolio.realized_pnl >= 0} sub="Closed positions"/><Metric title="Unrealized P/L" value={signedMoney(data.portfolio.unrealized_pnl)} positive={data.portfolio.unrealized_pnl >= 0} sub="Open positions"/></View><Section title="Open positions" action="See all" onAction={() => setTab("Positions")}/><Card>{data.positions.slice(0,4).map((p,i)=><React.Fragment key={p.symbol}>{i>0 && <View style={styles.rowDivider}/>}<PositionRow p={p}/></React.Fragment>)}{data.positions.length===0 && <Text style={styles.emptyText}>No open positions returned by the server.</Text>}</Card><Section title="Recent activity" action="View history" onAction={() => setTab("Activity")}/><Card>{data.trades.slice(0,3).map((t,i)=><React.Fragment key={t.id || `${t.symbol}-${i}`}>{i>0 && <View style={styles.rowDivider}/>}<TradeRow t={t}/></React.Fragment>)}{data.trades.length===0 && <Text style={styles.emptyText}>No trades returned by the server.</Text>}</Card></>;
+  const overview = () => <><Card style={styles.hero}><View style={styles.heroTop}><Label style={{ color: "#C4D0E4" }}>TOTAL VIRTUAL EQUITY</Label><View style={styles.heroIcon}><Wallet size={18} color={C.green}/></View></View><Text style={styles.heroValue}>{money(total)}</Text><View style={styles.heroChange}>{(data.portfolio.daily_pnl ?? 0) < 0 ? <ArrowDownLeft size={15} color={C.red}/> : <ArrowUpRight size={15} color={C.green}/>}<Text style={[styles.heroChangeText, { color: (data.portfolio.daily_pnl ?? 0) < 0 ? C.red : C.green }]}>{signedMoney(data.portfolio.daily_pnl)} today {pct(data.portfolio.daily_pnl_percent)}</Text></View><View style={styles.chartLabels}><Text style={styles.chartCaption}>Portfolio trend</Text><Text style={styles.chartCaption}>Last 5 sessions</Text></View><PerformanceChart values={chartValues}/><View style={styles.chartFoot}><Text style={styles.chartCaption}>REALIZED + UNREALIZED P/L</Text><Text style={[styles.chartFootValue, { color: data.portfolio.realized_pnl + data.portfolio.unrealized_pnl >= 0 ? C.green : C.red }]}>{signedMoney(data.portfolio.realized_pnl + data.portfolio.unrealized_pnl)}</Text></View></Card><View style={styles.metricsGrid}><Metric title="Realized P/L" value={signedMoney(data.portfolio.realized_pnl)} positive={data.portfolio.realized_pnl >= 0} sub="Closed positions"/><Metric title="Unrealized P/L" value={signedMoney(data.portfolio.unrealized_pnl)} positive={data.portfolio.unrealized_pnl >= 0} sub="Open positions"/></View><Section title="Open positions" action="See all" onAction={() => setTab("Positions")}/><Card>{data.positions.slice(0,4).map((p,i)=><React.Fragment key={p.symbol}>{i>0 && <View style={styles.rowDivider}/>}<PositionRow p={p}/></React.Fragment>)}{data.positions.length===0 && <Text style={styles.emptyText}>No open positions returned by the server.</Text>}</Card><Section title="Recent activity" action="View history" onAction={() => setTab("Activity")}/><Card>{data.trades.slice(0,3).map((t,i)=><React.Fragment key={t.id || `${t.symbol}-${i}`}>{i>0 && <View style={styles.rowDivider}/>}<TradeRow t={t}/></React.Fragment>)}{data.trades.length===0 && <Text style={styles.emptyText}>No trades returned by the server.</Text>}</Card></>;
 
   const positionsPage = () => <>{header("Positions", "A closer look at your open exposure.")}<View style={styles.sortRow}>{(["symbol","pnl","value"] as SortKey[]).map(k=><Pressable key={k} onPress={()=>{if(positionSort===k)setSortAsc(!sortAsc);else {setPositionSort(k);setSortAsc(false);}}} style={[styles.filterChip,positionSort===k&&styles.filterActive]}><Text style={[styles.filterText,positionSort===k&&styles.filterTextActive]}>{k==="pnl"?"P/L":k==="value"?"Market value":"Symbol"} {positionSort===k?(sortAsc?"↑":"↓"):""}</Text></Pressable>)}</View><View style={styles.metricsGrid}><Metric title="Open positions" value={String(data.positions.length)} sub="Current snapshot"/><Metric title="Unrealized P/L" value={signedMoney(data.portfolio.unrealized_pnl)} positive={data.portfolio.unrealized_pnl >= 0} sub="Mark-to-market"/></View><Card>{sortedPositions.map((p,i)=><React.Fragment key={p.symbol}>{i>0 && <View style={styles.rowDivider}/>}<PositionRow p={p}/><View style={styles.positionDetails}><Text style={styles.detailText}>Qty <Text style={styles.detailStrong}>{p.quantity}</Text></Text><Text style={styles.detailText}>Avg. entry <Text style={styles.detailStrong}>{money(p.average_entry_price)}</Text></Text><Text style={styles.detailText}>Last <Text style={styles.detailStrong}>{money(p.current_price)}</Text></Text></View></React.Fragment>)}{!data.positions.length && <Text style={styles.emptyText}>No positions available.</Text>}</Card></>;
 
@@ -284,7 +301,7 @@ export default function App() {
 
   if (!loggedIn) return <SafeAreaProvider><SafeAreaView edges={["top","bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg}/><ScrollView contentContainerStyle={styles.loginWrap} keyboardShouldPersistTaps="handled"><View style={styles.loginLogo}><ChartNoAxesCombined size={30} color={C.bg}/></View><Text style={styles.loginTitle}>InvestAI</Text><Text style={styles.loginSubtitle}>{isCreatingAccount ? "Create a profile stored securely on this device." : "Sign in to your local profile."}</Text><Card><Text style={styles.fieldLabel}>USERNAME</Text><TextInput value={loginName} onChangeText={setLoginName} autoCapitalize="none" autoCorrect={false} placeholder="Username" placeholderTextColor="#687790" style={styles.input}/><Text style={[styles.fieldLabel,{marginTop:18}]}>PASSWORD{enableBiometrics&&!isCreatingAccount?" · BIOMETRIC SIGN-IN ENABLED":""}</Text><View style={styles.passwordWrap}><TextInput value={loginPassword} onChangeText={setLoginPassword} editable={!enableBiometrics||isCreatingAccount} secureTextEntry={!showPassword} autoCapitalize="none" autoCorrect={false} placeholder={enableBiometrics&&!isCreatingAccount?"Unlocked after biometric verification":"Password"} placeholderTextColor="#687790" style={[styles.input,styles.passwordInput,(enableBiometrics&&!isCreatingAccount)&&{opacity:0.55}]}/>{!enableBiometrics||isCreatingAccount?<Pressable accessibilityRole="button" accessibilityLabel={showPassword?"Hide password characters":"Show password characters"} onPress={()=>setShowPassword(v=>!v)} style={styles.passwordToggle}>{showPassword?<EyeOff size={19} color={C.muted}/>:<Eye size={19} color={C.muted}/>}</Pressable>:null}</View><View style={styles.biometricRow}><View style={styles.biometricCopy}><Text style={styles.rowTitle}>Enable biometric sign-in</Text><Text style={styles.rowSubtitle}>{isCreatingAccount?"Create the profile first, then enable biometrics.":enableBiometrics?"Password is locked; verify your fingerprint or face to sign in.":"Verify your fingerprint or face to enable password autofill."}</Text></View><Switch value={enableBiometrics&&!isCreatingAccount} disabled={isCreatingAccount} onValueChange={toggleBiometrics} trackColor={{false:C.border,true:"#52752D"}} thumbColor={enableBiometrics?C.green:C.muted}/></View>{authError?<Text selectable style={styles.errorText}>{authError}</Text>:null}<Pressable onPress={signIn} disabled={loading} style={[styles.primaryButton,loading&&{opacity:0.6}]}>{loading?<ActivityIndicator color={C.bg}/>:<ShieldCheck size={18} color={C.bg}/>}<Text style={styles.primaryButtonText}>{loading?(isCreatingAccount?"Creating profile…":"Signing in…"):(isCreatingAccount?"Create local account":"Sign in")}</Text></Pressable><Pressable onPress={()=>{setIsCreatingAccount(v=>!v);setAuthError("");}} style={styles.serverSetupLink}><Text style={styles.action}>{isCreatingAccount?"Already have a profile? Sign in":"New to InvestAI? Create account"}</Text></Pressable></Card><Text style={styles.loginFoot}>Your profile, server URL, and bearer token are stored locally on this device. Server connection checks run only when both URL and token are saved.</Text></ScrollView></SafeAreaView></SafeAreaProvider>;
 
-  return <SafeAreaProvider><SafeAreaView edges={["top", "bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg} /><TopBar connected={!data.demo}/><View style={styles.main}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>sync(true)} tintColor={C.green} colors={[C.green]}/>}>{tab==="Overview" ? <View style={styles.pageHeading}><Text style={styles.pageTitle}>Good evening.</Text><Text style={styles.pageSubtitle}>Here's how your portfolio is doing.</Text></View> : null}{pages[tab]()}<View style={{height:18}}/></ScrollView></View><View style={styles.tabBar}>{tabs.map(({key,icon:Icon})=><Pressable key={key} onPress={()=>setTab(key)} style={styles.tabButton}><Icon size={20} color={tab===key?C.green:C.muted} strokeWidth={tab===key?2.5:1.8}/><Text style={[styles.tabLabel,tab===key&&{color:C.green}]}>{key==="Overview"?"Home":key}</Text>{tab===key?<View style={styles.tabIndicator}/>:null}</Pressable>)}</View></SafeAreaView></SafeAreaProvider>;
+  return <SafeAreaProvider><SafeAreaView edges={["top", "bottom"]} style={styles.safe}><StatusBar barStyle="light-content" backgroundColor={C.bg} /><TopBar connected={isConnected}/><View style={styles.main}><ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={()=>sync(true)} tintColor={C.green} colors={[C.green]}/>}>{tab==="Overview" ? <View style={styles.pageHeading}><Text style={styles.pageTitle}>Good evening.</Text><Text style={styles.pageSubtitle}>Here's how your portfolio is doing.</Text></View> : null}{pages[tab]()}<View style={{height:18}}/></ScrollView></View><View style={styles.tabBar}>{tabs.map(({key,icon:Icon})=><Pressable key={key} onPress={()=>setTab(key)} style={styles.tabButton}><Icon size={20} color={tab===key?C.green:C.muted} strokeWidth={tab===key?2.5:1.8}/><Text style={[styles.tabLabel,tab===key&&{color:C.green}]}>{key==="Overview"?"Home":key}</Text>{tab===key?<View style={styles.tabIndicator}/>:null}</Pressable>)}</View></SafeAreaView></SafeAreaProvider>;
 }
 
 const styles = StyleSheet.create({

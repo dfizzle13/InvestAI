@@ -133,22 +133,66 @@ export async function saveConnection(url: string, token: string) {
   }
   return { url: normalized, token: token.trim() };
 }
+// Remote HTTPS tunnels and mobile networks can take longer than a desktop request.
+const API_TIMEOUT_MS = 25000;
+const RETRY_DELAY_MS = 800;
+type RequestError = Error & { retryable?: boolean };
+
 async function getJson<T>(base: string, token: string, path: string): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 9000);
-  try {
-    const response = await fetch(base + path, {
-      method: "GET",
-      headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      signal: controller.signal
-    });
-    if (!response.ok) throw new Error(`${path}: server returned HTTP ${response.status}`);
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.toLowerCase().includes("application/json")) throw new Error(`${path}: expected a JSON response`);
-    return await response.json() as T;
-  } finally {
-    clearTimeout(timer);
+  const url = base.trim().replace(/\/+$/, "") + path;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, API_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        let detail = "";
+        try {
+          const payload = await response.json();
+          if (typeof payload?.detail === "string") detail = `: ${payload.detail}`;
+        } catch {
+          // An HTML proxy error still has a useful HTTP status.
+        }
+        const hint = response.status === 401 || response.status === 403
+          ? " Check the saved bearer token."
+          : response.status === 404
+            ? " Verify that the configured server exposes this API route."
+            : "";
+        const error = new Error(`${path}: HTTP ${response.status}${detail}.${hint}`) as RequestError;
+        error.retryable = [502, 503, 504].includes(response.status);
+        throw error;
+      }
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.toLowerCase().includes("json")) {
+        throw new Error(`${path}: server returned non-JSON content (possibly a tunnel login or proxy page).`);
+      }
+      return await response.json() as T;
+    } catch (cause: unknown) {
+      clearTimeout(timer);
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      const networkFailure = error.name === "AbortError"
+        || /aborted|network request failed|failed to fetch|network error|econnreset|etimedout/i.test(error.message);
+      const suffix = attempt === 2 ? " (after 2 attempts)" : "";
+      const message = timedOut
+        ? `${path}: request timed out after ${API_TIMEOUT_MS / 1000} seconds${suffix}. Check the server URL and HTTPS tunnel.`
+        : networkFailure
+          ? `${path}: network request failed${suffix} (${error.message}). Check your phone's connection and the server's HTTPS address.`
+          : error.message;
+      if (attempt < 2 && (timedOut || networkFailure || (error as RequestError).retryable)) {
+        await new Promise<void>(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        continue;
+      }
+      throw new Error(message);
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  throw new Error(`${path}: request unsuccessful.`);
 }
 
 function listFrom<T>(value: any, keys: string[]): T[] {

@@ -128,17 +128,31 @@ export default function App() {
   useEffect(() => {
     if (!loggedIn || !baseUrl.trim() || !token.trim()) { setIsConnected(false); return; }
     let cancelled = false;
+    let checkTimer: ReturnType<typeof setTimeout> | undefined;
     const checkConnection = async () => {
       try {
         await testConnection(baseUrl, token);
-        if (!cancelled) setIsConnected(true);
-      } catch {
-        if (!cancelled) setIsConnected(false);
+        const next = await fetchInvestData(baseUrl, token);
+        if (cancelled) return;
+        setData(next);
+        setIsConnected(true);
+        setLastSync(next.lastSync || new Date().toISOString());
+        setLastError("");
+        setConnectionMessage("Connected securely. Live data loaded.");
+      } catch (err: any) {
+        if (cancelled) return;
+        const message = err?.message || String(err);
+        setIsConnected(false);
+        setConnectionMessage("Server connection check failed: " + message);
+        setLastError("Automatic reconnection failed: " + (err?.stack || message));
+      } finally {
+        // Schedule only after the preceding check finishes; no overlapping checks.
+        if (!cancelled) checkTimer = setTimeout(checkConnection, 30000);
       }
     };
-    void checkConnection();
-    const interval = setInterval(checkConnection, 30000);
-    return () => { cancelled = true; clearInterval(interval); };
+    // Sign-in and Connect already do their own first sync; avoid competing requests.
+    checkTimer = setTimeout(checkConnection, 30000);
+    return () => { cancelled = true; if (checkTimer) clearTimeout(checkTimer); };
   }, [loggedIn, baseUrl, token]);
 
   const sync = useCallback(async (quiet = false) => {
